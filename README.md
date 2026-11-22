@@ -14,7 +14,7 @@ recorder, no editing timeline: change the script, run it again.
 ![contact sheet of the demo video with click, target, zoom and caption marks](docs/assets/local-demo-sheet.png)
 
 ```ts
-import { defineScenario } from "demoreel";
+import { defineScenario } from "@phil65/demoreel";
 
 export default defineScenario({
 	name: "add-task",
@@ -39,7 +39,7 @@ npx demoreel run add-task.scenario.ts
 ## Install
 
 ```bash
-npm install -D demoreel playwright
+npm install -D @phil65/demoreel playwright
 npx playwright install chromium      # Linux CI: npx playwright install --with-deps chromium
 # ffmpeg with libx264 on PATH (or DEMOREEL_FFMPEG=/path/to/ffmpeg):
 sudo apt install ffmpeg              # macOS: brew install ffmpeg

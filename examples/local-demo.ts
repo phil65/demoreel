@@ -1,4 +1,4 @@
-import { defineScenario } from "demoreel";
+import { defineScenario } from "@phil65/demoreel";
 
 export default defineScenario({
 	name: "local-demo",

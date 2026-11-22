@@ -17,8 +17,8 @@ export interface InitOptions {
 
 export function scenarioTemplate(opts: { name: string; url?: string; js?: boolean; ext?: string }): string {
 	const header = opts.js
-		? `// @ts-check\nimport { defineScenario } from "demoreel";\n`
-		: `import { defineScenario } from "demoreel";\n`;
+		? `// @ts-check\nimport { defineScenario } from "@phil65/demoreel";\n`
+		: `import { defineScenario } from "@phil65/demoreel";\n`;
 	if (opts.url) {
 		return `${header}
 export default defineScenario({

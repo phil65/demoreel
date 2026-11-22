@@ -79,6 +79,6 @@ export async function loadScenario(file: string): Promise<Scenario> {
 			: `importing it failed: ${(firstError as Error)?.message?.split("\n")[0]}`;
 	throw new DemoreelError(
 		`cannot load ${file}: ${reason}`,
-		"use Node >= 22.18, Bun (`bunx demoreel run ...`), `npm i -D tsx` (or `node --import tsx`), or write the scenario in .js/.mjs",
+		"use Node >= 22.18, Bun (`bunx @phil65/demoreel run ...`), `npm i -D tsx` (or `node --import tsx`), or write the scenario in .js/.mjs",
 	);
 }

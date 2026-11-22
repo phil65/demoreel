@@ -11,7 +11,7 @@ and repeat. Never judge a video you have not inspected.
 ## 1. Write the scenario
 
 ```ts
-import { defineScenario } from "demoreel";
+import { defineScenario } from "@phil65/demoreel";
 
 export default defineScenario({
 	name: "checkout",

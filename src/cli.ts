@@ -171,7 +171,7 @@ function cmdInit({ positionals, flags }: ParsedArgs) {
 	});
 	for (const f of written) log(`wrote ${path.relative(process.cwd(), f) || f}`);
 	const scenario = path.relative(process.cwd(), written[0]);
-	log(`\nnext:\n  npm install -D demoreel playwright   # if not installed yet\n  npx demoreel run ${scenario}`);
+	log(`\nnext:\n  npm install -D @phil65/demoreel playwright   # if not installed yet\n  npx demoreel run ${scenario}`);
 }
 
 async function cmdDoctor() {

@@ -67,7 +67,7 @@ describe("init", () => {
 		}
 	});
 	it("templates import defineScenario from demoreel", () => {
-		expect(scenarioTemplate({ name: "x" })).toContain('from "demoreel"');
+		expect(scenarioTemplate({ name: "x" })).toContain('from "@phil65/demoreel"');
 	});
 });
 

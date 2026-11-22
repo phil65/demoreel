@@ -1,5 +1,5 @@
 {
-  "name": "demoreel",
+  "name": "@phil65/demoreel",
   "version": "0.1.0",
   "private": false,
   "description": "Scripted product demo videos (videos as code): Playwright scenarios with auto cursor + auto zoom, rendered headless by OpenScreen's exporter.",

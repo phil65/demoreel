@@ -22,7 +22,7 @@ test -s out/demo/demo.openscreen && test -s out/demo/timeline.json && test -s ou
 npx demoreel validate out/demo/demo.openscreen
 if [[ "${1:-}" != "--no-render" ]]; then
   cat > short.scenario.mjs <<'JS'
-import { defineScenario } from "demoreel";
+import { defineScenario } from "@phil65/demoreel";
 export default defineScenario({
   name: "short",
   serve: "./demo-app",
