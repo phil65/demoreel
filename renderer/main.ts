@@ -74,7 +74,7 @@ const api = {
 			videoUrl: req.videoUrl,
 			width,
 			height,
-			frameRate: req.frameRate ?? 60,
+			frameRate: req.frameRate ?? 30,
 			bitrate,
 			codec: "avc1.640033",
 			wallpaper: editor.wallpaper,

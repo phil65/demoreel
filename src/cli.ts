@@ -42,7 +42,7 @@ function renderFlags(flags: ParsedArgs["flags"]) {
 	if (q && !["medium", "good", "source"].includes(q)) throw new UsageError("--quality must be medium, good or source");
 	return {
 		gpu: gpuMode(flags),
-		frameRate: flags.fps === undefined ? 60 : Number(flags.fps),
+		frameRate: flags.fps === undefined ? 30 : Number(flags.fps),
 		quality: q as "medium" | "good" | "source" | undefined,
 		verbose: Boolean(flags.verbose),
 	};

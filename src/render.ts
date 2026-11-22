@@ -131,7 +131,7 @@ export async function renderProject(opts: RenderOptions): Promise<RenderResult> 
 				project,
 				cursorData,
 				videoUrl: mediaUrl,
-				frameRate: opts.frameRate ?? 60,
+				frameRate: opts.frameRate ?? 30,
 				quality: opts.quality,
 				cursor: opts.cursor,
 			},

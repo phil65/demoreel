@@ -54,14 +54,14 @@ npx demoreel doctor                  # checks Chromium, ffmpeg, GPU, framesheet
 - **GPU recommended.** Rendering runs OpenScreen's WebGL (Pixi) + WebCodecs pipeline in
   headless Chromium. demoreel probes for a hardware GL backend (Vulkan / GL on Linux, Metal
   on macOS, D3D11 on Windows) and falls back to SwiftShader with a warning. Rough numbers
-  for a 17 s demo: 1080p60 about 2 min on an integrated AMD GPU, 720p30 about 35 s; software
+  for a 17 s demo: 1080p30 (default) about 77 s on an integrated AMD GPU, 1080p60 about 130 s, 720p30 about 35 s; software
   rendering is 10-20x slower (fine for 640x360 drafts and CI, slow for 1080p).
 
 ## CLI
 
 ```
 demoreel run <scenario.ts|js>     record, write project, render MP4, contact sheet
-    --out DIR  --no-render  --fps 60  --quality medium|good|source  --[no-]gpu
+    --out DIR  --no-render  --fps 30  --quality medium|good|source  --[no-]gpu
     --trim-idle  --speed 1.5  --viewport 1280x720  --headed  -n 12  --framesheet auto|off
 demoreel render <project.openscreen> [--out FILE.mp4 --fps --quality --[no-]gpu]
 demoreel rezoom <outdir>          re-derive zooms / idle cuts / marks from timeline.json

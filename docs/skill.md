@@ -41,11 +41,11 @@ export default defineScenario({
 ```bash
 npx demoreel run checkout.scenario.ts --out out/checkout      # record + render + sheet
 npx demoreel run checkout.scenario.ts --no-render             # fast: record only
-npx demoreel run checkout.scenario.ts --quality medium --fps 30   # cheaper drafts
+npx demoreel run checkout.scenario.ts --quality medium       # cheaper drafts
 ```
 
 No GPU (CI, containers): software rendering is slow; draft with `--viewport 1280x720
---quality source --fps 30` and render the final 1080p60 once.
+--quality source` and render the final 1080p once (30 fps by default; `--fps 60` for smoother motion at twice the render time).
 
 ## 3. Inspect
 

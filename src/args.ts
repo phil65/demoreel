@@ -19,7 +19,7 @@ export interface CommandSpec {
 }
 
 const gpu: FlagSpec = { type: "boolean", description: "force GPU on/off (default: auto-detect, fall back to software)" };
-const fps: FlagSpec = { type: "number", value: "N", description: "output frame rate (default 60)" };
+const fps: FlagSpec = { type: "number", value: "N", description: "output frame rate (default 30)" };
 const quality: FlagSpec = { type: "string", value: "Q", description: "medium (720p) | good (1080p, default) | source" };
 const verbose: FlagSpec = { type: "boolean", alias: "v", description: "print browser console output" };
 const frames: FlagSpec = { type: "number", alias: "n", value: "N", description: "contact sheet tiles (default 12)" };
