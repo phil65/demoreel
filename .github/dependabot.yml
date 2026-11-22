@@ -16,6 +16,21 @@ updates:
     schedule:
       interval: "monthly"
     versioning-strategy: increase-if-necessary
+    # These are bundled into the renderer together with the vendored OpenScreen sources:
+    # take major versions only together with an OpenScreen update (see AGENTS.md).
+    ignore:
+      - dependency-name: "pixi.js"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pixi-filters"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "mediabunny"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "web-demuxer"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "motion"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "gif.js"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns:
