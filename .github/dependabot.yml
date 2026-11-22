@@ -1,0 +1,22 @@
+# Keep GitHub Actions and npm dev dependencies up to date: one grouped PR per ecosystem per
+# month, merged automatically by .github/workflows/dependabot-automerge.yml once CI passes.
+
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    versioning-strategy: increase-if-necessary
+    groups:
+      npm:
+        patterns:
+          - "*"

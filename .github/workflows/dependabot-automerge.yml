@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+# Merge Dependabot PRs after the CI workflow passed on them. Runs on workflow_run, so it never
+# checks out or executes PR code; it only calls the GitHub API.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.actor.login == 'dependabot[bot]' &&
+      github.event.workflow_run.pull_requests[0] != null
+    steps:
+      - name: Merge the Dependabot PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          REPO: ${{ github.repository }}
+        run: |
+          author=$(gh pr view "$PR" --repo "$REPO" --json author -q .author.login)
+          if [ "$author" != "app/dependabot" ] && [ "$author" != "dependabot[bot]" ]; then
+            echo "PR #$PR is by $author, not Dependabot: not merging"; exit 0
+          fi
+          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch
