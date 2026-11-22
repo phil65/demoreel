@@ -60,11 +60,11 @@
     "playwright": ">=1.45.0"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^26.6.6",
     "ajv": "^8.20.0",
     "gif.js": "^0.2.0",
     "mediabunny": "^1.40.1",
-    "motion": "^12.38.0",
+    "motion": "^14.14.0",
     "pixi-filters": "^6.1.5",
     "pixi.js": "^8.18.1",
     "playwright": "^1.65.1",
