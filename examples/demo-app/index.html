@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Tasklet</title>
+<style>
+  :root { --accent: #5b5bd6; --bg: #f6f7fb; --card: #fff; --text: #1d1f2b; --muted: #6b6f85; --line: #e4e6ef; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 28px; background: var(--card); border-bottom: 1px solid var(--line); }
+  header .logo { width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #5b5bd6, #c0589b); }
+  header h1 { font-size: 18px; margin: 0; }
+  header nav { margin-left: auto; display: flex; gap: 18px; color: var(--muted); }
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 24px; padding: 28px; max-width: 1180px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: 0 1px 2px rgba(20,20,50,.04); }
+  h2 { font-size: 16px; margin: 0 0 14px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  input, select { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; font: inherit; background: #fff; }
+  input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); border-color: var(--accent); }
+  button { cursor: pointer; font: inherit; border: 0; border-radius: 8px; padding: 9px 16px; }
+  #add { margin-top: 18px; width: 100%; background: var(--accent); color: #fff; font-weight: 600; }
+  #add:hover { filter: brightness(1.08); }
+  .toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .toolbar h2 { margin: 0; }
+  .chip { background: #eef0fb; color: var(--accent); padding: 5px 12px; border-radius: 99px; font-size: 13px; }
+  .chip.active { background: var(--accent); color: #fff; }
+  .toolbar .chips { margin-left: auto; display: flex; gap: 6px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 12px; padding: 12px 6px; border-bottom: 1px solid var(--line); transition: background .4s; }
+  li.new { background: #fff7d6; }
+  li .check { width: 18px; height: 18px; border: 2px solid #c5c8d8; border-radius: 5px; cursor: pointer; flex: none; }
+  li.done .check { background: var(--accent); border-color: var(--accent); }
+  li.done .title { text-decoration: line-through; color: var(--muted); }
+  li .prio { margin-left: auto; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #f1f2f7; color: var(--muted); }
+  li .prio.high { background: #fde8ea; color: #c0334a; }
+  .stats { display: flex; gap: 14px; margin-top: 18px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<header><div class="logo"></div><h1>Tasklet</h1><nav><span>Board</span><span>Calendar</span><span>Reports</span></nav></header>
+<main>
+  <section class="card">
+    <h2>New task</h2>
+    <form id="form" onsubmit="return false">
+      <label for="title">Title</label>
+      <input id="title" placeholder="What needs to be done?" autocomplete="off" />
+      <label for="owner">Owner</label>
+      <input id="owner" placeholder="Assign someone" autocomplete="off" />
+      <label for="prio">Priority</label>
+      <select id="prio"><option>Normal</option><option>High</option><option>Low</option></select>
+      <button id="add" type="submit">Add task</button>
+    </form>
+  </section>
+  <section class="card">
+    <div class="toolbar"><h2>Tasks</h2><div class="chips"><span class="chip active" data-filter="all" role="button" style="cursor:pointer">All</span><span class="chip" data-filter="open" role="button" style="cursor:pointer">Open</span><span class="chip" data-filter="done" role="button" style="cursor:pointer">Done</span></div></div>
+    <ul id="list"></ul>
+    <div class="stats"><span id="count"></span><span>Synced just now</span></div>
+  </section>
+</main>
+<script>
+  const tasks = [
+    { title: "Write release notes", owner: "Ana", prio: "Normal", done: true },
+    { title: "Review onboarding flow", owner: "Ben", prio: "High", done: false },
+    { title: "Fix flaky login test", owner: "Chen", prio: "Normal", done: false },
+    { title: "Plan Q3 roadmap", owner: "Dara", prio: "Low", done: false },
+  ];
+  let filter = "all";
+  const list = document.getElementById("list");
+  function render(newIndex) {
+    list.innerHTML = "";
+    tasks.forEach((t, i) => {
+      if (filter === "open" && t.done) return;
+      if (filter === "done" && !t.done) return;
+      const li = document.createElement("li");
+      li.className = (t.done ? "done " : "") + (i === newIndex ? "new" : "");
+      li.innerHTML = `<span class="check" role="checkbox"></span><span class="title"></span><span class="owner" style="color:var(--muted);font-size:13px"></span><span class="prio ${t.prio === "High" ? "high" : ""}">${t.prio}</span>`;
+      li.querySelector(".title").textContent = t.title;
+      li.querySelector(".owner").textContent = t.owner ? "· " + t.owner : "";
+      li.querySelector(".check").onclick = () => { t.done = !t.done; render(); };
+      list.appendChild(li);
+      if (i === newIndex) setTimeout(() => li.classList.remove("new"), 1500);
+    });
+    document.getElementById("count").textContent = `${tasks.filter(t => !t.done).length} open · ${tasks.filter(t => t.done).length} done`;
+  }
+  document.getElementById("add").onclick = () => {
+    const title = document.getElementById("title").value.trim();
+    if (!title) return;
+    tasks.unshift({ title, owner: document.getElementById("owner").value.trim(), prio: document.getElementById("prio").value, done: false });
+    document.getElementById("form").reset();
+    render(0);
+  };
+  document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+    document.querySelectorAll(".chip").forEach(x => x.classList.toggle("active", x === c));
+    filter = c.dataset.filter; render();
+  });
+  render();
+</script>
+</body>
+</html>

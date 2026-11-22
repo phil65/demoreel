@@ -1,0 +1,32 @@
+{
+  "name": "demoreel",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Scripted, automatic product demo videos (videos as code) with auto cursor + auto zoom, rendered by OpenScreen's exporter.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "demoreel": "./src/cli.ts"
+  },
+  "scripts": {
+    "demo:local": "bun src/cli.ts run examples/local-demo.ts --out out/local",
+    "demo:schemez": "bun src/cli.ts run examples/schemez.ts --out out/schemez",
+    "typecheck": "tsc --noEmit",
+    "vendor": "bun scripts/vendor-openscreen.ts"
+  },
+  "dependencies": {
+    "gif.js": "^0.2.0",
+    "mediabunny": "^1.40.1",
+    "motion": "^12.38.0",
+    "pixi-filters": "^6.1.5",
+    "pixi.js": "^8.18.1",
+    "playwright": "^1.65.1",
+    "vite": "^8.3.8",
+    "web-demuxer": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.5",
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2"
+  }
+}
