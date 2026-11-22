@@ -1,32 +1,76 @@
 {
   "name": "demoreel",
-  "version": "0.0.1",
-  "private": true,
-  "description": "Scripted, automatic product demo videos (videos as code) with auto cursor + auto zoom, rendered by OpenScreen's exporter.",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Scripted product demo videos (videos as code): Playwright scenarios with auto cursor + auto zoom, rendered headless by OpenScreen's exporter.",
+  "keywords": [
+    "demo",
+    "video",
+    "screencast",
+    "playwright",
+    "openscreen",
+    "screen-recording",
+    "product-demo",
+    "zoom"
+  ],
   "type": "module",
   "license": "MIT",
+  "author": "Philipp Temminghoff",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/phil65/demoreel.git"
+  },
+  "homepage": "https://github.com/phil65/demoreel#readme",
+  "bugs": "https://github.com/phil65/demoreel/issues",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "demoreel": "./src/cli.ts"
+    "demoreel": "./dist/cli.js"
   },
+  "files": [
+    "dist",
+    "examples/local-demo.ts",
+    "examples/demo-app",
+    "licenses",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "sideEffects": false,
   "scripts": {
-    "demo:local": "bun src/cli.ts run examples/local-demo.ts --out out/local",
-    "demo:schemez": "bun src/cli.ts run examples/schemez.ts --out out/schemez",
-    "typecheck": "tsc --noEmit",
-    "vendor": "bun scripts/vendor-openscreen.ts"
+    "build": "npm run build:renderer && npm run build:lib",
+    "build:renderer": "node scripts/build-renderer.ts",
+    "build:lib": "node scripts/build-lib.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "DEMOREEL_INTEGRATION=1 vitest run test/integration.test.ts",
+    "demo:local": "node dist/cli.js run examples/local-demo.ts --out out/local",
+    "vendor": "node scripts/vendor-openscreen.ts",
+    "prepack": "npm run build"
   },
-  "dependencies": {
+  "peerDependencies": {
+    "playwright": ">=1.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "ajv": "^8.20.0",
     "gif.js": "^0.2.0",
     "mediabunny": "^1.40.1",
     "motion": "^12.38.0",
     "pixi-filters": "^6.1.5",
     "pixi.js": "^8.18.1",
     "playwright": "^1.65.1",
+    "typescript": "^7.0.2",
     "vite": "^8.3.8",
+    "vitest": "^5.1.1",
     "web-demuxer": "^4.0.0"
-  },
-  "devDependencies": {
-    "@types/bun": "^1.4.5",
-    "@types/node": "^26.6.6",
-    "typescript": "^7.0.2"
   }
 }

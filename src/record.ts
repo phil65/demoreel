@@ -1,15 +1,23 @@
 /** Runs a scenario in headless Chromium, records it and writes the OpenScreen project. */
 import fs from "node:fs";
-import http from "node:http";
 import path from "node:path";
-import { chromium } from "playwright";
-import { buildCursorData, buildProject, type LookOptions, writeProject } from "./project";
-import { ScreencastRecorder } from "./recorder";
-import { type PacingOptions, Scene } from "./scene";
-import type { RecordingResult, Viewport } from "./types";
-import { deriveZoomRegions, type ZoomOptions } from "./zoom";
+import { type ComposeResult, compose } from "./compose.ts";
+import { checkFfmpeg, launchChromium } from "./env.ts";
+import type { IdleOptions } from "./idle.ts";
+import type { LookOptions } from "./project.ts";
+import { ScreencastRecorder } from "./recorder.ts";
+import { type PacingOptions, Scene } from "./scene.ts";
+import { type StaticServer, serveStatic } from "./server.ts";
+import type { RecordingResult, Viewport } from "./types.ts";
+import type { ZoomOptions } from "./zoom.ts";
+
+export interface ScenarioContext {
+	/** URL of the scenario's `serve` directory ("" if none). */
+	baseUrl: string;
+}
 
 export interface Scenario {
+	/** Output file stem (`<name>.openscreen`, `<name>.mp4`). */
 	name: string;
 	/** Browser viewport == recorded frame size in px (default 1920x1080). */
 	viewport?: Viewport;
@@ -23,37 +31,46 @@ export interface Scenario {
 	/** Static directory (relative to the scenario file) served at `ctx.baseUrl`. */
 	serve?: string;
 	colorScheme?: "light" | "dark";
+	/** Seed for the cursor-path jitter (same seed => same motion). */
 	seed?: number;
 	pacing?: Partial<PacingOptions>;
 	zoom?: Partial<ZoomOptions>;
 	look?: Partial<LookOptions>;
-	run(scene: Scene, ctx: { baseUrl: string }): Promise<void>;
+	/** Cut (or speed up) idle stretches with OpenScreen trim/speed regions. */
+	trimIdle?: boolean | Partial<IdleOptions>;
+	run(scene: Scene, ctx: ScenarioContext): Promise<void>;
 }
 
+/** Identity helper that gives scenario files type checking and editor completion. */
 export function defineScenario(s: Scenario): Scenario {
 	return s;
 }
 
-function serveStatic(dir: string): Promise<{ url: string; close: () => void }> {
-	const types: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json" };
-	const server = http.createServer((req, res) => {
-		const u = new URL(req.url ?? "/", "http://x");
-		let file = path.join(dir, decodeURIComponent(u.pathname));
-		if (!file.startsWith(dir)) return void res.writeHead(403).end();
-		if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, "index.html");
-		if (!fs.existsSync(file)) return void res.writeHead(404).end();
-		res.writeHead(200, { "Content-Type": types[path.extname(file)] ?? "application/octet-stream" });
-		fs.createReadStream(file).pipe(res);
-	});
-	return new Promise((resolve) =>
-		server.listen(0, "127.0.0.1", () => {
-			const a = server.address() as { port: number };
-			resolve({ url: `http://127.0.0.1:${a.port}`, close: () => server.close() });
-		}),
-	);
+export interface RecordOptions {
+	/** Output directory (default: out/<name>). */
+	outDir?: string;
+	/** Path of the scenario file; `serve` is resolved relative to it (default: cwd). */
+	scenarioFile?: string;
+	/** Override scenario fields (e.g. from CLI flags). */
+	overrides?: Partial<Omit<Scenario, "run" | "name">>;
+	/** Show the browser while recording (debugging; the recording then includes OS chrome timing). */
+	headed?: boolean;
+	log?: (msg: string) => void;
 }
 
-export async function recordScenario(scenario: Scenario, scenarioFile: string, outDir: string) {
+export interface RecordResult extends ComposeResult {
+	result: RecordingResult;
+	outDir: string;
+	zoomRegions: ComposeResult["timeline"]["zoomRegions"];
+}
+
+export async function recordScenario(input: Scenario, opts: RecordOptions = {}): Promise<RecordResult> {
+	const scenario: Scenario = { ...input, ...opts.overrides };
+	if (!scenario.name || typeof scenario.run !== "function") {
+		throw new Error("a scenario needs a `name` and an async `run(scene, ctx)` (use defineScenario)");
+	}
+	checkFfmpeg();
+	const outDir = path.resolve(opts.outDir ?? path.join("out", scenario.name));
 	const timings: Record<string, number> = {};
 	const t0 = Date.now();
 	fs.mkdirSync(outDir, { recursive: true });
@@ -61,10 +78,16 @@ export async function recordScenario(scenario: Scenario, scenarioFile: string, o
 	const framesDir = path.join(outDir, ".frames");
 	fs.rmSync(framesDir, { recursive: true, force: true });
 
-	const server = scenario.serve ? await serveStatic(path.resolve(path.dirname(scenarioFile), scenario.serve)) : null;
-	const browser = await chromium.launch({ headless: true });
+	const baseDir = opts.scenarioFile ? path.dirname(path.resolve(opts.scenarioFile)) : process.cwd();
+	let server: StaticServer | null = null;
+	if (scenario.serve) {
+		const dir = path.resolve(baseDir, scenario.serve);
+		if (!fs.existsSync(dir)) throw new Error(`scenario.serve: ${dir} does not exist`);
+		server = await serveStatic(dir);
+	}
+	const browser = await launchChromium({ headless: !opts.headed });
 	let recorder: ScreencastRecorder | null = null;
-	let scene: Scene;
+	let scene: Scene | null = null;
 	try {
 		const context = await browser.newContext({ viewport, deviceScaleFactor: 1, colorScheme: scenario.colorScheme ?? "light" });
 		if (scenario.cssZoom && scenario.cssZoom !== 1) {
@@ -80,10 +103,7 @@ export async function recordScenario(scenario: Scenario, scenarioFile: string, o
 			page,
 			viewport,
 			async () => {
-				recorder = new ScreencastRecorder(page, framesDir, {
-					maxWidth: viewport.width,
-					maxHeight: viewport.height,
-				});
+				recorder = new ScreencastRecorder(page, framesDir, { maxWidth: viewport.width, maxHeight: viewport.height });
 				await recorder.start();
 				return recorder;
 			},
@@ -91,29 +111,50 @@ export async function recordScenario(scenario: Scenario, scenarioFile: string, o
 		);
 		const tRun = Date.now();
 		await scenario.run(scene, { baseUrl: server?.url ?? "" });
-		await scene.pause(900);
+		// Hold the last frame so the final zoom-out and captions finish.
+		const lastCaptionEnd = Math.max(0, ...scene.captions.map((c) => c.endMs));
+		await scene.pause(Math.max(900, lastCaptionEnd - scene.now() + 300));
 		timings.scenarioMs = Date.now() - tRun;
-	} finally {
-		server?.close();
+	} catch (e) {
+		await browser.close().catch(() => {});
+		await server?.close();
+		throw e;
 	}
 	const rec = recorder as ScreencastRecorder | null;
-	if (!rec) throw new Error("scenario never started recording (call scene.goto first)");
+	if (!rec || !scene) {
+		await browser.close().catch(() => {});
+		await server?.close();
+		throw new Error("scenario never started recording (call scene.goto first)");
+	}
 	const { durationMs, frameCount } = await rec.stop();
 	await browser.close();
+	await server?.close();
 
 	const videoPath = path.join(outDir, "recording.mp4");
 	const tEnc = Date.now();
-	const enc = await rec.encode(videoPath, 30);
-	void enc;
+	await rec.encode(videoPath, 30);
 	timings.encodeMs = Date.now() - tEnc;
+	const frameTimes = rec.frameTimes;
 	fs.rmSync(framesDir, { recursive: true, force: true });
-
-	const zoomRegions = deriveZoomRegions(scene.actions, viewport, durationMs, scenario.zoom);
-	const project = buildProject({ videoPath, zoomRegions, captions: scene.captions, look: scenario.look });
-	const cursorData = buildCursorData(scene.samples);
-	const projectPath = writeProject(outDir, scenario.name, project, videoPath, cursorData);
 	timings.recordTotalMs = Date.now() - t0;
 
+	const composed = compose({
+		name: scenario.name,
+		outDir,
+		videoPath,
+		durationMs,
+		frameCount,
+		viewport,
+		frameSize: rec.frameSize,
+		actions: scene.actions,
+		captions: scene.captions,
+		samples: scene.samples,
+		frameTimes,
+		timings,
+		zoom: scenario.zoom,
+		look: scenario.look,
+		trimIdle: scenario.trimIdle,
+	});
 	const result: RecordingResult = {
 		videoPath,
 		durationMs,
@@ -122,13 +163,9 @@ export async function recordScenario(scenario: Scenario, scenarioFile: string, o
 		samples: scene.samples,
 		actions: scene.actions,
 		captions: scene.captions,
+		frameTimes,
 		frameCount,
 		timings,
 	};
-	// Machine-readable log for agents / the optimisation loop.
-	fs.writeFileSync(
-		path.join(outDir, "timeline.json"),
-		JSON.stringify({ scenario: scenario.name, durationMs, frameCount, viewport, frameSize: rec.frameSize, actions: scene.actions, zoomRegions, captions: scene.captions, timings }, null, 2),
-	);
-	return { result, projectPath, zoomRegions };
+	return { ...composed, result, outDir, zoomRegions: composed.timeline.zoomRegions };
 }

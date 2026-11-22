@@ -2,16 +2,18 @@
  * Copies the minimal OpenScreen (MIT, github.com/siddharthvaddem/openscreen) module closure
  * needed for headless export into vendor/openscreen/, byte-for-byte, keeping its LICENSE.
  *
- * Usage: bun scripts/vendor-openscreen.ts [path-to-openscreen-checkout]
+ * Usage: node scripts/vendor-openscreen.ts <path-to-openscreen-checkout>
+ * Then: npm run build:renderer && npm test && DEMOREEL_INTEGRATION=1 npm test (see AGENTS.md).
  */
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const src = path.resolve(
 	process.argv[2] ?? path.join(process.env.HOME ?? "", "dev/.oss-worktrees/_openscreen-src"),
 );
-const dest = path.resolve(import.meta.dir, "../vendor/openscreen");
+const dest = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../vendor/openscreen");
 const ENTRIES = [
 	"src/lib/exporter/videoExporter.ts",
 	"src/components/video-editor/projectPersistence.ts",
@@ -61,6 +63,7 @@ for (const f of files) {
 const commit = execSync("git rev-parse HEAD", { cwd: src }).toString().trim();
 fs.writeFileSync(
 	path.join(dest, "VENDORED.md"),
-	`# Vendored OpenScreen modules\n\nUnmodified copies of files from https://github.com/siddharthvaddem/openscreen\n(MIT License, Copyright (c) 2025 Siddharth Vaddem; see LICENSE in this folder),\ncommit \`${commit}\`. Regenerate with \`bun scripts/vendor-openscreen.ts <checkout>\`.\n\nnpm packages required by these files: ${[...packages].sort().join(", ")}\n\nFiles:\n\n${files.map((f) => `- ${path.relative(src, f)}`).sort().join("\n")}\n`,
+	`# Vendored OpenScreen modules\n\nUnmodified copies of files from https://github.com/siddharthvaddem/openscreen\n(MIT License, Copyright (c) 2025 Siddharth Vaddem; see LICENSE in this folder),\ncommit \`${commit}\`. Regenerate with \`node scripts/vendor-openscreen.ts <checkout>\`.\n\nnpm packages required by these files: ${[...packages].sort().join(", ")}\n\nFiles:\n\n${files.map((f) => `- ${path.relative(src, f)}`).sort().join("\n")}\n`,
 );
 console.log(`vendored ${files.length} files from ${commit.slice(0, 8)}; packages: ${[...packages].join(" ")}`);
+console.log("keep these in package.json devDependencies at versions compatible with OpenScreen's package.json");

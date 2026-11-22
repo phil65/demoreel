@@ -2,7 +2,7 @@
 
 Unmodified copies of files from https://github.com/siddharthvaddem/openscreen
 (MIT License, Copyright (c) 2025 Siddharth Vaddem; see LICENSE in this folder),
-commit `ca8104c279da0d4b4481ec992ff103949e22c772`. Regenerate with `bun scripts/vendor-openscreen.ts <checkout>`.
+commit `ca8104c279da0d4b4481ec992ff103949e22c772`. Regenerate with `node scripts/vendor-openscreen.ts <checkout>`.
 
 npm packages required by these files: gif.js, mediabunny, motion, pixi-filters, pixi.js, web-demuxer
 

@@ -1,4 +1,4 @@
-import { defineScenario } from "../src/index";
+import { defineScenario } from "demoreel";
 
 export default defineScenario({
 	name: "local-demo",

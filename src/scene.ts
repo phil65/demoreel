@@ -4,11 +4,15 @@
  * be derived afterwards.
  */
 import type { Locator, Page } from "playwright";
-import { easeAimed, makePath, mulberry32, type Point, sleep, travelDuration } from "./motion";
-import type { ScreencastRecorder } from "./recorder";
-import type { ActionRecord, Box, Caption, CursorSample, Viewport, ZoomHint } from "./types";
+import { easeAimed, makePath, mulberry32, type Point, sleep, travelDuration } from "./motion.ts";
+import type { ScreencastRecorder } from "./recorder.ts";
+import type { ActionRecord, Box, Caption, CursorSample, Depth, Viewport, ZoomHint } from "./types.ts";
 
+/** A CSS/Playwright selector string or a Playwright Locator. */
 export type Target = string | Locator;
+
+/** Attribute that marks a zoom anchor: actions inside it zoom onto the anchor's box. */
+export const ZOOM_ATTRIBUTE = "data-demoreel-zoom";
 
 export interface PacingOptions {
 	/** Global speed multiplier (2 = twice as fast). */
@@ -37,9 +41,57 @@ export const DEFAULT_PACING: PacingOptions = {
 export interface ActionOptions {
 	/** Zoom onto the target (click/type default true, hover default false). */
 	zoom?: boolean | ZoomHint;
+	/** Shown in timeline.json / marks.json (default: the selector). */
 	label?: string;
 	/** Wait for a navigation started by this click. */
 	navigates?: boolean;
+}
+
+export interface ZoomOptions {
+	/** Zoom depth 1-6 (1.25x, 1.5x, 1.8x, 2.2x, 3.5x, 5x); default: derived from the element size. */
+	depth?: Depth;
+	/** Context around the element as a factor of its size (default 1). */
+	context?: number;
+	/** How long to stay zoomed (ms, default 2500). */
+	duration?: number;
+	/** Block until the zoom ends (default false: following actions run while zoomed). */
+	wait?: boolean;
+	label?: string;
+}
+
+export interface HighlightOptions {
+	/** How long the highlight stays (ms, default 1800). */
+	duration?: number;
+	/** Outline colour (default #ffcc00). */
+	color?: string;
+	/** Space between element and outline (px, default 6). */
+	padding?: number;
+	/** Also zoom onto the element while highlighted (default false). */
+	zoom?: boolean | ZoomHint;
+	/** Block until the highlight is gone (default false). */
+	wait?: boolean;
+	label?: string;
+}
+
+interface Inspected {
+	box: Box;
+	kind: CursorKind;
+	/** Box of the closest `data-demoreel-zoom` ancestor (incl. the element itself). */
+	anchor?: { box: Box; value: string };
+}
+
+/** Applies a `data-demoreel-zoom` value to an action's zoom setting. */
+export function applyZoomAnchor(
+	zoom: boolean | ZoomHint,
+	anchor: { value: string } | undefined,
+): boolean | ZoomHint {
+	if (!anchor) return zoom;
+	const v = anchor.value.trim().toLowerCase();
+	if (v === "off" || v === "none" || v === "false") return false;
+	if (zoom === false) return false;
+	const depth = /^[1-6]$/.test(v) ? (Number(v) as Depth) : undefined;
+	if (!depth) return zoom;
+	return { ...(typeof zoom === "object" ? zoom : {}), depth };
 }
 
 type CursorKind = NonNullable<CursorSample["cursorType"]>;
@@ -55,13 +107,18 @@ export class Scene {
 	private recorder: ScreencastRecorder | null = null;
 	private startRecording: () => Promise<ScreencastRecorder>;
 	pacing: PacingOptions;
+	/** The underlying Playwright page, for anything the Scene API does not cover. */
+	readonly page: Page;
+	readonly viewport: Viewport;
 
 	constructor(
-		readonly page: Page,
-		readonly viewport: Viewport,
+		page: Page,
+		viewport: Viewport,
 		startRecording: () => Promise<ScreencastRecorder>,
 		opts: { seed?: number; pacing?: Partial<PacingOptions> } = {},
 	) {
+		this.page = page;
+		this.viewport = viewport;
 		this.startRecording = startRecording;
 		this.rand = mulberry32(opts.seed ?? 42);
 		this.pacing = { ...DEFAULT_PACING, ...opts.pacing };
@@ -77,7 +134,8 @@ export class Scene {
 		}
 	}
 
-	private now() {
+	/** Current time on the recording clock (ms since the first frame; 0 before recording). */
+	now() {
 		return this.recorder ? this.recorder.now() : 0;
 	}
 
@@ -105,14 +163,16 @@ export class Scene {
 		return loc.filter({ visible: true }).first();
 	}
 
-	private async inspect(loc: Locator): Promise<{ box: Box; kind: CursorKind }> {
+	private async inspect(loc: Locator): Promise<Inspected> {
 		try {
 			await loc.waitFor({ state: "visible", timeout: 10_000 });
 		} catch (e) {
 			throw new Error(`target not visible on ${this.page.url()}: ${loc} (${(e as Error).message.split("\n")[0]})`);
 		}
-		const info = await loc.evaluate((el) => {
+		const info = await loc.evaluate((el, attr) => {
 			const r = el.getBoundingClientRect();
+			const anchorEl = el.closest(`[${attr}]`);
+			const ar = anchorEl?.getBoundingClientRect();
 			const cursor = getComputedStyle(el).cursor;
 			const tag = el.tagName.toLowerCase();
 			const editable =
@@ -121,9 +181,13 @@ export class Scene {
 			return {
 				box: { x: r.x, y: r.y, width: r.width, height: r.height },
 				kind: cursor === "pointer" || (cursor === "auto" && clickable) ? "pointer" : cursor === "text" || (cursor === "auto" && editable) ? "text" : "arrow",
+				anchor:
+					anchorEl && ar
+						? { box: { x: ar.x, y: ar.y, width: ar.width, height: ar.height }, value: anchorEl.getAttribute(attr) ?? "" }
+						: undefined,
 			};
-		});
-		return info as { box: Box; kind: CursorKind };
+		}, ZOOM_ATTRIBUTE);
+		return info as Inspected;
 	}
 
 	private inViewport(box: Box) {
@@ -156,7 +220,7 @@ export class Scene {
 	}
 
 	/** Moves the real mouse along an eased curve at ~60 Hz, recording every position. */
-	async moveTo(to: Point, target: Box | null = null, targetKind: CursorKind = "arrow") {
+	private async travel(to: Point, target: Box | null = null, targetKind: CursorKind = "arrow") {
 		await this.ensureRecording();
 		const from = { ...this.cursor };
 		const dist = Math.hypot(to.x - from.x, to.y - from.y);
@@ -193,8 +257,8 @@ export class Scene {
 		this.sample("mouseup");
 	}
 
-	private record(a: Omit<ActionRecord, "endMs">) {
-		const rec: ActionRecord = { ...a, endMs: this.now() };
+	private record(a: Omit<ActionRecord, "endMs"> & { endMs?: number }) {
+		const rec: ActionRecord = { ...a, endMs: a.endMs ?? this.now() };
 		this.actions.push(rec);
 		return rec;
 	}
@@ -218,16 +282,25 @@ export class Scene {
 	async click(target: Target, opts: ActionOptions = {}) {
 		await this.ensureRecording();
 		await sleep(this.ms(this.pacing.beforeAction));
-		const { box, kind } = await this.prepare(target);
+		const { box, kind, anchor } = await this.prepare(target);
 		const startMs = this.now();
 		const urlBefore = this.page.url();
-		await this.moveTo(this.aimPoint(box), box, kind);
+		await this.travel(this.aimPoint(box), box, kind);
 		const arriveMs = this.now();
 		await sleep(this.ms(this.pacing.aimDwell));
 		const nav = opts.navigates ? this.page.waitForURL((u) => u.toString() !== urlBefore, { timeout: 15000 }) : null;
 		await this.clickHere();
 		if (nav) await nav;
-		this.record({ kind: "click", startMs, arriveMs, box, zoom: opts.zoom ?? true, label: opts.label });
+		this.record({
+			kind: "click",
+			startMs,
+			arriveMs,
+			box,
+			zoomBox: anchor?.box,
+			zoom: applyZoomAnchor(opts.zoom ?? true, anchor),
+			point: { ...this.cursor },
+			label: opts.label ?? labelOf(target),
+		});
 		await sleep(this.ms(this.pacing.afterClick));
 		if (opts.navigates || this.page.url() !== urlBefore) {
 			await this.page.waitForLoadState("load");
@@ -238,10 +311,11 @@ export class Scene {
 	async type(target: Target, text: string, opts: ActionOptions & { clear?: boolean } = {}) {
 		await this.ensureRecording();
 		await sleep(this.ms(this.pacing.beforeAction));
-		const { loc, box, kind } = await this.prepare(target);
+		const { loc, box, kind, anchor } = await this.prepare(target);
 		const startMs = this.now();
-		await this.moveTo(this.aimPoint(box), box, kind);
+		await this.travel(this.aimPoint(box), box, kind);
 		const arriveMs = this.now();
+		const point = { ...this.cursor };
 		await sleep(this.ms(this.pacing.aimDwell));
 		await this.clickHere();
 		if (opts.clear) await loc.fill("");
@@ -251,27 +325,46 @@ export class Scene {
 			const base = this.pacing.typeDelay * (0.55 + this.rand() * 0.9);
 			await sleep(this.ms(ch === " " ? base * 1.6 : base));
 		}
-		this.record({ kind: "type", startMs, arriveMs, box, zoom: opts.zoom ?? true, label: opts.label, text });
+		this.record({
+			kind: "type",
+			startMs,
+			arriveMs,
+			box,
+			zoomBox: anchor?.box,
+			zoom: applyZoomAnchor(opts.zoom ?? true, anchor),
+			point,
+			label: opts.label ?? labelOf(target),
+			text,
+		});
 		await sleep(this.ms(this.pacing.afterType));
 	}
 
-	async press(key: string) {
+	/** Presses a key or chord (Playwright syntax, e.g. "Enter", "Control+K"). */
+	async press(key: string, opts: { label?: string } = {}) {
 		await this.ensureRecording();
 		const startMs = this.now();
 		await this.page.keyboard.press(key);
-		this.record({ kind: "press", startMs, arriveMs: startMs, label: key });
+		this.record({ kind: "press", startMs, arriveMs: startMs, label: opts.label ?? key });
 		await sleep(this.ms(300));
 	}
 
 	async hover(target: Target, opts: ActionOptions & { dwell?: number } = {}) {
 		await this.ensureRecording();
 		await sleep(this.ms(this.pacing.beforeAction));
-		const { box, kind } = await this.prepare(target);
+		const { box, kind, anchor } = await this.prepare(target);
 		const startMs = this.now();
-		await this.moveTo(this.aimPoint(box), box, kind);
+		await this.travel(this.aimPoint(box), box, kind);
 		const arriveMs = this.now();
 		await sleep(this.ms(opts.dwell ?? 900));
-		this.record({ kind: "hover", startMs, arriveMs, box, zoom: opts.zoom ?? false, label: opts.label });
+		this.record({
+			kind: "hover",
+			startMs,
+			arriveMs,
+			box,
+			zoomBox: anchor?.box,
+			zoom: applyZoomAnchor(opts.zoom ?? false, anchor),
+			label: opts.label ?? labelOf(target),
+		});
 	}
 
 	/**
@@ -334,6 +427,94 @@ export class Scene {
 		this.record({ kind: "scroll", startMs, arriveMs: startMs });
 	}
 
+	/**
+	 * Moves the cursor to an element (centre) or to a viewport point without clicking.
+	 * Unlike `hover`, it does not dwell and never zooms.
+	 */
+	async moveTo(target: Target | Point, opts: { label?: string } = {}) {
+		await this.ensureRecording();
+		const startMs = this.now();
+		if (typeof target === "object" && "x" in target && "y" in target && !("locator" in target)) {
+			await this.travel({ x: target.x, y: target.y });
+			this.record({ kind: "move", startMs, arriveMs: this.now(), label: opts.label });
+			return;
+		}
+		const { box, kind } = await this.prepare(target as Target);
+		await this.travel(this.aimPoint(box), box, kind);
+		this.record({ kind: "move", startMs, arriveMs: this.now(), box, zoom: false, label: opts.label ?? labelOf(target as Target) });
+	}
+
+	/**
+	 * Explicit zoom onto an element for `duration` ms, overriding automatic zooms in that window.
+	 * Non-blocking by default: script the actions to show while zoomed right after it.
+	 */
+	async zoom(target: Target, opts: ZoomOptions = {}) {
+		await this.ensureRecording();
+		const { box } = await this.prepare(target);
+		const startMs = this.now();
+		const duration = this.ms(opts.duration ?? 2500);
+		const hint: ZoomHint = { ...(opts.depth ? { depth: opts.depth } : {}), ...(opts.context ? { context: opts.context } : {}) };
+		this.record({
+			kind: "zoom",
+			startMs,
+			arriveMs: startMs,
+			endMs: startMs + duration,
+			box,
+			zoom: Object.keys(hint).length ? hint : true,
+			label: opts.label ?? labelOf(target),
+		});
+		if (opts.wait) await sleep(duration);
+	}
+
+	/** Draws an outline around an element in the page (recorded, so it zooms with the page). */
+	async highlight(target: Target, opts: HighlightOptions = {}) {
+		await this.ensureRecording();
+		const { loc, box, anchor } = await this.prepare(target);
+		const startMs = this.now();
+		const duration = this.ms(opts.duration ?? 1800);
+		await loc.evaluate(
+			(el, o) => {
+				const r = el.getBoundingClientRect();
+				const d = document.createElement("div");
+				d.setAttribute("data-demoreel-highlight", "");
+				d.style.cssText = [
+					"position:fixed",
+					`left:${r.left - o.padding}px`,
+					`top:${r.top - o.padding}px`,
+					`width:${r.width + 2 * o.padding}px`,
+					`height:${r.height + 2 * o.padding}px`,
+					`border:3px solid ${o.color}`,
+					"border-radius:10px",
+					`box-shadow:0 0 0 4px color-mix(in srgb, ${o.color} 30%, transparent), 0 0 24px 4px color-mix(in srgb, ${o.color} 45%, transparent)`,
+					"pointer-events:none",
+					"z-index:2147483647",
+					"opacity:0",
+					"transition:opacity 220ms ease-out",
+				].join(";");
+				document.documentElement.appendChild(d);
+				requestAnimationFrame(() => {
+					d.style.opacity = "1";
+				});
+				setTimeout(() => {
+					d.style.opacity = "0";
+					setTimeout(() => d.remove(), 260);
+				}, Math.max(0, o.duration - 260));
+			},
+			{ duration, color: opts.color ?? "#ffcc00", padding: opts.padding ?? 6 },
+		);
+		this.record({
+			kind: "highlight",
+			startMs,
+			arriveMs: startMs,
+			endMs: startMs + duration,
+			box,
+			zoomBox: anchor?.box,
+			zoom: applyZoomAnchor(opts.zoom ?? false, anchor),
+			label: opts.label ?? labelOf(target),
+		});
+		if (opts.wait) await sleep(duration);
+	}
+
 	async pause(ms: number) {
 		await this.ensureRecording();
 		const startMs = this.now();
@@ -353,4 +534,8 @@ export class Scene {
 		this.captions.push({ text, startMs, endMs: startMs + duration });
 		if (opts.wait) await sleep(duration);
 	}
+}
+
+function labelOf(target: Target): string | undefined {
+	return typeof target === "string" ? target : undefined;
 }

@@ -1,0 +1,1 @@
+gif.js 0.2.0: MIT (no licence file in the package)

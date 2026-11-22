@@ -1,5 +1,6 @@
 /**
- * Browser entry for headless export. Loaded by src/render.ts inside Playwright Chromium.
+ * Browser entry for headless export, bundled by scripts/build-renderer.ts into dist/renderer/
+ * and loaded by src/render.ts inside Playwright Chromium.
  * Mirrors what OpenScreen's VideoEditor.tsx does on "Export": project -> VideoExporterConfig.
  */
 import {
@@ -15,7 +16,6 @@ export interface RenderRequest {
 	project: unknown;
 	cursorData: CursorRecordingData | null;
 	videoUrl: string;
-	outputPath: string;
 	frameRate?: number;
 	quality?: "medium" | "good" | "source";
 	cursor?: { size?: number; smoothing?: number; motionBlur?: number; clickBounce?: number; show?: boolean };
@@ -108,16 +108,16 @@ const api = {
 			cursorClickTimestamps,
 			onProgress: (p) => {
 				const pct = Math.floor(p.percentage);
-				if (pct !== lastPct && pct % 10 === 0) {
+				if (pct !== lastPct) {
 					lastPct = pct;
-					console.log(`[demoreel] export ${pct}% (${p.currentFrame}/${p.totalFrames})`);
+					console.log(`[demoreel] progress ${pct}`);
 				}
 				status(`exporting ${pct}%`);
 			},
 		});
 		const result = await exporter.export();
 		if (!result.success || !result.blob) throw new Error(result.error ?? "export failed");
-		const res = await fetch(`/__demoreel/output?path=${encodeURIComponent(req.outputPath)}`, {
+		const res = await fetch("/__demoreel/output", {
 			method: "POST",
 			body: result.blob,
 		});

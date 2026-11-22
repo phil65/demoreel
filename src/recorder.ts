@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import type { CDPSession, Page } from "playwright";
+import { ffmpegBin } from "./env.ts";
 
 interface FrameInfo {
 	file: string;
@@ -31,12 +32,14 @@ export class ScreencastRecorder {
 	private firstFrame: Promise<void>;
 	private resolveFirst!: () => void;
 	frameSize = { width: 0, height: 0 };
+	private page: Page;
+	private dir: string;
+	private opts: ScreencastOptions;
 
-	constructor(
-		private page: Page,
-		private dir: string,
-		private opts: ScreencastOptions,
-	) {
+	constructor(page: Page, dir: string, opts: ScreencastOptions) {
+		this.page = page;
+		this.dir = dir;
+		this.opts = opts;
 		fs.mkdirSync(dir, { recursive: true });
 		this.firstFrame = new Promise((r) => {
 			this.resolveFirst = r;
@@ -83,6 +86,11 @@ export class ScreencastRecorder {
 		await this.firstFrame;
 	}
 
+	/** Recording-clock times (ms since the first frame) of all captured frames. */
+	get frameTimes(): number[] {
+		return this.frames.map((f) => Math.round((f.ts - this.t0) * 10) / 10);
+	}
+
 	/** Current time on the recording clock (ms since first frame). */
 	now(): number {
 		return Date.now() - this.t0;
@@ -104,7 +112,7 @@ export class ScreencastRecorder {
 		this.frameSize = jpegSize(first) ?? this.frameSize;
 		const total = Math.max(1, Math.round(((this.stopTs - this.t0) / 1000) * fps));
 		const ff = spawn(
-			"ffmpeg",
+			ffmpegBin(),
 			[
 				"-y", "-loglevel", "error",
 				"-f", "image2pipe", "-framerate", String(fps), "-c:v", "mjpeg", "-i", "-",
@@ -153,22 +161,4 @@ function jpegSize(buf: Buffer): { width: number; height: number } | null {
 		i += 2 + len;
 	}
 	return null;
-}
-
-export function run(cmd: string, args: string[]): Promise<string> {
-	return new Promise((resolve, reject) => {
-		const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-		let out = "";
-		let err = "";
-		p.stdout.on("data", (d) => {
-			out += d;
-		});
-		p.stderr.on("data", (d) => {
-			err += d;
-		});
-		p.on("error", reject);
-		p.on("close", (code) =>
-			code === 0 ? resolve(out) : reject(new Error(`${cmd} exited ${code}: ${err.slice(-2000)}`)),
-		);
-	});
 }

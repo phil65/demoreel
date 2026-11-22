@@ -1,158 +1,185 @@
 /**
- * Headless export: serves renderer/ (which imports OpenScreen's VideoExporter from
- * vendor/openscreen) with Vite, opens it in headless Chromium via Playwright and lets
- * OpenScreen's own WebCodecs + Pixi pipeline render the MP4.
+ * Headless export: serves the prebuilt renderer bundle (dist/renderer, OpenScreen's
+ * VideoExporter) from a tiny local server, opens it in headless Chromium and lets OpenScreen's
+ * own WebCodecs + Pixi pipeline render the MP4. Validation runs OpenScreen's
+ * validateProjectData / normalizeProjectEditor in Node (dist/openscreen/project.js).
  */
 import fs from "node:fs";
-import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
-import { chromium } from "playwright";
-import { createServer, type Plugin, type ViteDevServer } from "vite";
+import { DemoreelError, type GpuMode, launchChromium, renderArgs } from "./env.ts";
+import { openscreenProjectApi, rendererDir } from "./openscreen.ts";
+import { type Handler, sendFile, serveStatic } from "./server.ts";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
-const VENDOR = path.join(ROOT, "vendor/openscreen");
+export interface CursorStyle {
+	/** Cursor scale (OpenScreen default 3). */
+	size?: number;
+	smoothing?: number;
+	motionBlur?: number;
+	clickBounce?: number;
+	show?: boolean;
+}
 
 export interface RenderOptions {
 	projectPath: string;
-	outputPath: string;
+	/** Default: the project path with `.mp4`. */
+	outputPath?: string;
 	frameRate?: number;
+	/** OpenScreen export quality: medium (720p), good (1080p), source. Default: the project's. */
 	quality?: "medium" | "good" | "source";
-	cursor?: { size?: number; smoothing?: number; motionBlur?: number; clickBounce?: number; show?: boolean };
-	/** Use a GPU-backed GL instead of SwiftShader (faster where available). */
-	gpu?: boolean;
+	cursor?: CursorStyle;
+	/** `"auto"` (default): use the GPU if one works, else SwiftShader with a warning. */
+	gpu?: GpuMode;
+	/** Print browser console output. */
 	verbose?: boolean;
+	/** Progress / warning logger (default: console.error). */
+	log?: (msg: string) => void;
+	/** Called with 0-100. */
+	onProgress?: (percent: number) => void;
+	timeoutMs?: number;
 }
 
-function mediaPlugin(files: Map<string, string>, outputs: Set<string>): Plugin {
-	const wasm = path.join(ROOT, "node_modules/web-demuxer/dist/wasm-files/web-demuxer.wasm");
-	const serveFile = (req: IncomingMessage, res: ServerResponse, file: string, type: string) => {
-		const size = fs.statSync(file).size;
-		const range = req.headers.range?.match(/bytes=(\d*)-(\d*)/);
-		if (range) {
-			const start = range[1] ? Number(range[1]) : 0;
-			const end = range[2] ? Number(range[2]) : size - 1;
-			res.writeHead(206, {
-				"Content-Type": type,
-				"Content-Range": `bytes ${start}-${end}/${size}`,
-				"Accept-Ranges": "bytes",
-				"Content-Length": end - start + 1,
-			});
-			fs.createReadStream(file, { start, end }).pipe(res);
-		} else {
-			res.writeHead(200, { "Content-Type": type, "Content-Length": size, "Accept-Ranges": "bytes" });
-			fs.createReadStream(file).pipe(res);
-		}
-	};
-	return {
-		name: "demoreel-media",
-		configureServer(server) {
-			server.middlewares.use((req, res, next) => {
-				const url = new URL(req.url ?? "/", "http://x");
-				if (url.pathname.endsWith("/wasm/web-demuxer.wasm")) return serveFile(req, res, wasm, "application/wasm");
-				if (url.pathname.startsWith("/__demoreel/media/")) {
-					const file = files.get(url.pathname);
-					if (!file) return void res.writeHead(404).end();
-					return serveFile(req, res, file, file.endsWith(".mp4") ? "video/mp4" : "video/webm");
-				}
-				if (url.pathname === "/__demoreel/output" && req.method === "POST") {
-					const target = url.searchParams.get("path") ?? "";
-					if (!outputs.has(target)) return void res.writeHead(403).end();
-					const out = fs.createWriteStream(target);
-					req.pipe(out);
-					out.on("finish", () => res.writeHead(200).end("ok"));
-					return;
-				}
-				next();
-			});
-		},
-	};
+export interface RenderResult {
+	outputPath: string;
+	width: number;
+	height: number;
+	bitrate: number;
+	bytes: number;
+	warnings: string[];
+	gpu: boolean;
+	renderMs: number;
+	setupMs: number;
+	totalMs: number;
 }
 
-export async function startRendererServer(files: Map<string, string>, outputs: Set<string>): Promise<ViteDevServer> {
-	const server = await createServer({
-		configFile: false,
-		root: path.join(ROOT, "renderer"),
-		publicDir: path.join(VENDOR, "public"),
-		logLevel: "warn",
-		resolve: { alias: { "@": path.join(VENDOR, "src") } },
-		server: { port: 0, host: "127.0.0.1", fs: { allow: [ROOT] } },
-		plugins: [mediaPlugin(files, outputs)],
-		optimizeDeps: { include: ["pixi.js", "pixi-filters/motion-blur", "mediabunny", "web-demuxer", "gif.js", "motion"] },
-	});
-	await server.listen();
-	return server;
+function readProject(projectPath: string) {
+	if (!fs.existsSync(projectPath)) throw new DemoreelError(`project not found: ${projectPath}`);
+	try {
+		return JSON.parse(fs.readFileSync(projectPath, "utf8"));
+	} catch (e) {
+		throw new DemoreelError(`${projectPath} is not valid JSON: ${(e as Error).message}`);
+	}
 }
 
-export async function renderProject(opts: RenderOptions) {
+/** Resolves the project's screen video (absolute, or relative to the project file). */
+export function projectVideoPath(project: { media?: { screenVideoPath?: string }; videoPath?: string }, projectPath: string) {
+	const v = project.media?.screenVideoPath ?? project.videoPath;
+	if (!v) throw new DemoreelError(`${projectPath} has no media.screenVideoPath`);
+	const p = v.startsWith("file://") ? new URL(v).pathname : v;
+	return path.isAbsolute(p) ? p : path.resolve(path.dirname(projectPath), p);
+}
+
+export async function renderProject(opts: RenderOptions): Promise<RenderResult> {
 	const t0 = Date.now();
-	const project = JSON.parse(fs.readFileSync(opts.projectPath, "utf8"));
-	const videoPath: string = project.media?.screenVideoPath ?? project.videoPath;
+	const log = opts.log ?? ((m: string) => console.error(m));
+	const projectPath = path.resolve(opts.projectPath);
+	const project = readProject(projectPath);
+	const v = await validateProject(projectPath);
+	if (!v.valid) throw new DemoreelError(`${projectPath} fails OpenScreen's validateProjectData()`);
+	const videoPath = projectVideoPath(project, projectPath);
+	if (!fs.existsSync(videoPath)) throw new DemoreelError(`recording not found: ${videoPath}`, "re-run `demoreel run`");
 	const cursorFile = `${videoPath}.cursor.json`;
 	const cursorData = fs.existsSync(cursorFile) ? JSON.parse(fs.readFileSync(cursorFile, "utf8")) : null;
-	const mediaUrl = `/__demoreel/media/0/${path.basename(videoPath)}`;
-	const outputPath = path.resolve(opts.outputPath);
-	const server = await startRendererServer(new Map([[mediaUrl, videoPath]]), new Set([outputPath]));
-	const address = server.httpServer?.address();
-	const port = typeof address === "object" && address ? address.port : 5173;
-	const browser = await chromium.launch({
-		headless: true,
-		args: opts.gpu
-			? ["--enable-gpu", "--ignore-gpu-blocklist", "--use-angle=vulkan", "--enable-features=Vulkan"]
-			: ["--enable-unsafe-swiftshader", "--use-gl=swiftshader"],
-	});
+	const outputPath = path.resolve(opts.outputPath ?? projectPath.replace(/\.openscreen$/, "") + ".mp4");
+	fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+	const mediaUrl = `/__demoreel/media/${encodeURIComponent(path.basename(videoPath))}`;
+
+	const handlers: Handler[] = [
+		(req, res, url) => {
+			if (url.pathname !== mediaUrl) return false;
+			sendFile(req, res, videoPath);
+			return true;
+		},
+		(req, res, url) => {
+			if (url.pathname !== "/__demoreel/output" || req.method !== "POST") return false;
+			const tmp = `${outputPath}.part`;
+			const out = fs.createWriteStream(tmp);
+			req.pipe(out);
+			out.on("finish", () => {
+				fs.renameSync(tmp, outputPath);
+				res.writeHead(200).end("ok");
+			});
+			out.on("error", (e) => res.writeHead(500).end(String(e)));
+			return true;
+		},
+	];
+	const server = await serveStatic(rendererDir(), handlers);
+	const gl = await renderArgs(opts.gpu ?? "auto", log);
+	const browser = await launchChromium({ args: gl.args });
 	try {
 		const page = await browser.newPage();
 		page.on("console", (m) => {
 			const t = m.text();
-			if (opts.verbose || t.startsWith("[demoreel]") || m.type() === "error") console.log(`  [browser] ${t}`);
+			if (t.startsWith("[demoreel] progress ")) {
+				opts.onProgress?.(Number(t.slice(20)));
+				return;
+			}
+			if (opts.verbose) log(`  [browser] ${t}`);
 		});
-		page.on("pageerror", (e) => console.error("  [pageerror]", e.message));
-		await page.goto(`http://127.0.0.1:${port}/`);
+		const pageErrors: string[] = [];
+		page.on("pageerror", (e) => {
+			pageErrors.push(e.message);
+			if (opts.verbose) log(`  [pageerror] ${e.message}`);
+		});
+		await page.goto(`${server.url}/index.html`);
 		await page.waitForFunction(() => (window as unknown as { demoreelReady?: boolean }).demoreelReady, null, {
-			timeout: 120_000,
+			timeout: 60_000,
 		});
 		const tReady = Date.now();
 		const result = await page.evaluate(
-			(req) => (window as any).demoreel.render(req),
+			(req) => (window as unknown as { demoreel: { render(r: unknown): Promise<Record<string, unknown>> } }).demoreel.render(req),
 			{
 				project,
 				cursorData,
 				videoUrl: mediaUrl,
-				outputPath,
 				frameRate: opts.frameRate ?? 60,
 				quality: opts.quality,
 				cursor: opts.cursor,
 			},
 		);
-		return { ...result, outputPath, setupMs: tReady - t0, totalMs: Date.now() - t0 };
+		return {
+			outputPath,
+			width: result.width as number,
+			height: result.height as number,
+			bitrate: result.bitrate as number,
+			bytes: result.bytes as number,
+			warnings: (result.warnings as string[]) ?? [],
+			renderMs: result.renderMs as number,
+			gpu: gl.gpu,
+			setupMs: tReady - t0,
+			totalMs: Date.now() - t0,
+		};
+	} catch (e) {
+		const msg = (e as Error).message ?? String(e);
+		if (/VideoEncoder|isConfigSupported|codec/i.test(msg) && !/upload/.test(msg)) {
+			throw new DemoreelError(`render failed in OpenScreen's exporter: ${msg.split("\n")[0]}`, "try --no-gpu, or `demoreel doctor`");
+		}
+		throw e;
 	} finally {
-		await browser.close();
+		await browser.close().catch(() => {});
 		await server.close();
 	}
 }
 
-/** Runs OpenScreen's own validateProjectData / normalizeProjectEditor on a project file. */
-export async function validateProject(projectPath: string) {
-	const project = JSON.parse(fs.readFileSync(projectPath, "utf8"));
-	const server = await startRendererServer(new Map(), new Set());
-	const address = server.httpServer?.address();
-	const port = typeof address === "object" && address ? address.port : 5173;
-	const browser = await chromium.launch({ headless: true });
-	try {
-		const page = await browser.newPage();
-		await page.goto(`http://127.0.0.1:${port}/`);
-		await page.waitForFunction(() => (window as any).demoreelReady, null, { timeout: 120_000 });
-		const res = await page.evaluate((p) => (window as any).demoreel.validate(p), project);
-		// Compare what we wrote with what OpenScreen would keep after normalisation.
-		const diffs: string[] = [];
-		if (res.valid) {
-			for (const [k, v] of Object.entries(project.editor)) {
-				if (JSON.stringify(v) !== JSON.stringify(res.normalized[k])) diffs.push(k);
-			}
-		}
-		return { valid: res.valid as boolean, media: res.media, changedByNormalize: diffs };
-	} finally {
-		await browser.close();
-		await server.close();
+export interface ValidationResult {
+	valid: boolean;
+	/** Media paths as OpenScreen resolves them. */
+	media: unknown;
+	/** Editor fields OpenScreen's normalizeProjectEditor would change (should be empty). */
+	changedByNormalize: string[];
+	/** The normalised editor state (what OpenScreen would load). */
+	normalized: Record<string, unknown> | null;
+}
+
+/** Runs OpenScreen's own validateProjectData / normalizeProjectEditor on a project (file or object). */
+export async function validateProject(project: string | Record<string, unknown>): Promise<ValidationResult> {
+	const data = typeof project === "string" ? readProject(path.resolve(project)) : project;
+	const os = await openscreenProjectApi();
+	const valid = os.validateProjectData(data);
+	if (!valid) return { valid: false, media: null, changedByNormalize: [], normalized: null };
+	const normalized = os.normalizeProjectEditor((data as { editor: unknown }).editor);
+	const changedByNormalize: string[] = [];
+	for (const [k, v] of Object.entries((data as { editor: Record<string, unknown> }).editor)) {
+		if (JSON.stringify(v) !== JSON.stringify(normalized[k])) changedByNormalize.push(k);
 	}
+	return { valid, media: os.resolveProjectMedia(data), changedByNormalize, normalized };
 }

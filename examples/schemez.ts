@@ -1,4 +1,4 @@
-import { defineScenario } from "../src/index";
+import { defineScenario } from "demoreel";
 
 /** Public docs site: open the API reference, go to a class page, scroll, hover members. */
 export default defineScenario({
